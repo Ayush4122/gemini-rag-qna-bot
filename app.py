@@ -12,6 +12,7 @@ import os
 from urllib.parse import urlparse, urljoin
 import re
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+import time
 
 # # Configure environment variables
 # if 'GOOGLE_API_KEY' not in os.environ:
@@ -28,6 +29,11 @@ class DocumentProcessor:
             chunk_overlap=50,
             length_function=len,
         )
+        self.max_pages = 5  # Default value
+        
+    def set_max_pages(self, max_pages: int):
+        """Set maximum pages to crawl."""
+        self.max_pages = max_pages
         
     def clean_text(self, text: str) -> str:
         """Remove special characters and extra whitespace."""
@@ -35,84 +41,73 @@ class DocumentProcessor:
         text = re.sub(r'[^\w\s.,!?-]', '', text)
         return text.strip()
     
-    def fetch_website_content(self, url: str, max_pages: int = 5) -> str:
-        """Recursively fetch content from website and its internal links."""
-        def get_links(page_url: str) -> List[str]:
-            try:
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                }
-                response = requests.get(page_url, headers=headers, timeout=10)
-                soup = BeautifulSoup(response.content, 'html.parser')
-                base_url = urlparse(page_url)
-                links = []
+    def get_links(self, url: str, soup: BeautifulSoup) -> List[str]:
+        """Extract valid links from the page."""
+        base_url = urlparse(url)
+        links = []
+        
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            absolute_url = urljoin(url, href)
+            parsed_url = urlparse(absolute_url)
+            
+            if parsed_url.netloc == base_url.netloc and parsed_url.scheme in ['http', 'https']:
+                links.append(absolute_url)
                 
-                for a in soup.find_all('a', href=True):
-                    href = a['href']
-                    # Convert relative URLs to absolute
-                    absolute_url = urljoin(page_url, href)
-                    # Only include links from the same domain
-                    if urlparse(absolute_url).netloc == base_url.netloc:
-                        links.append(absolute_url)
-                        
-                return links
-            except Exception as e:
-                st.warning(f"Error getting links from {page_url}: {str(e)}")
-                return []
-
+        return list(set(links))  # Remove duplicates
+    
+    def extract_from_website(self, url: str) -> str:
+        """Extract text content from website with recursive crawling."""
         visited = set()
         to_visit = [url]
-        content = []
+        combined_text = []
+        progress_bar = st.sidebar.progress(0)
+        status_text = st.sidebar.empty()
         
-        with st.sidebar:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-
-        while to_visit and len(visited) < max_pages:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        while to_visit and len(visited) < self.max_pages:
             current_url = to_visit.pop(0)
+            
             if current_url not in visited:
                 try:
-                    headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                    }
                     response = requests.get(current_url, headers=headers, timeout=10)
+                    response.raise_for_status()
                     soup = BeautifulSoup(response.content, 'html.parser')
                     
                     # Remove unwanted elements
                     for element in soup(['script', 'style', 'header', 'footer', 'nav']):
                         element.decompose()
                     
-                    page_text = soup.get_text(separator=' ', strip=True)
-                    content.append(page_text)
+                    # Extract text
+                    text = soup.get_text(separator=' ', strip=True)
+                    combined_text.append(text)
                     visited.add(current_url)
                     
-                    # Get new links to visit
-                    new_links = [link for link in get_links(current_url) if link not in visited]
-                    to_visit.extend(new_links)
+                    # Get new links
+                    if len(visited) < self.max_pages:
+                        new_links = self.get_links(current_url, soup)
+                        to_visit.extend([link for link in new_links if link not in visited])
                     
                     # Update progress
-                    progress = min(len(visited) / max_pages, 1.0)
+                    progress = len(visited) / self.max_pages
                     progress_bar.progress(progress)
-                    status_text.text(f"Processed {len(visited)} pages...")
+                    status_text.text(f"Processed {len(visited)} pages out of {self.max_pages}")
+                    time.sleep(1)  # To prevent too rapid requests
                     
                 except Exception as e:
-                    st.warning(f"Error fetching {current_url}: {str(e)}")
+                    st.warning(f"Error processing {current_url}: {str(e)}")
                     continue
         
-        # Clear progress indicators
         progress_bar.empty()
         status_text.empty()
         
-        # Combine all content and clean
-        combined_content = "\n\n".join(content)
-        return self.clean_text(combined_content)
-    
-    def extract_from_website(self, url: str) -> str:
-        """Extract text content from a website."""
-        try:
-            return self.fetch_website_content(url)
-        except Exception as e:
-            raise Exception(f"Error extracting text from website: {str(e)}")
+        if not combined_text:
+            raise Exception("No content could be extracted from the website")
+        
+        return "\n\n".join(combined_text)
     
     def extract_from_pdf(self, pdf_file) -> str:
         """Extract text content from a PDF file."""
@@ -122,7 +117,6 @@ class DocumentProcessor:
             for page in pdf_reader.pages:
                 text += page.extract_text() + " "
             return self.clean_text(text)
-            
         except Exception as e:
             raise Exception(f"Error extracting text from PDF: {str(e)}")
     
@@ -131,7 +125,7 @@ class DocumentProcessor:
         if not text.strip():
             raise ValueError("Empty text provided for splitting")
         return self.text_splitter.split_text(text)
-        
+
 class VectorStore:
     def __init__(self, embedding_dimension: int = 768):
         self.index = faiss.IndexFlatL2(embedding_dimension)
@@ -158,12 +152,6 @@ class RAGChatbot:
         self.embedding_model = genai.GenerativeModel('models/embedding-001')
         self.vector_store = VectorStore(embedding_dimension=768)
         self.doc_processor = DocumentProcessor()
-        self.safety_settings = {
-            "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
-            "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
-            "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
-            "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
-        }
         
     def get_embedding(self, text: str) -> np.ndarray:
         """Get embeddings for a text using Gemini."""
@@ -194,9 +182,12 @@ class RAGChatbot:
         except Exception as e:
             raise Exception(f"Error generating embedding: {str(e)}")
     
-    def process_source(self, source: Union[str, io.BytesIO], source_type: str):
+    def process_source(self, source: Union[str, io.BytesIO], source_type: str, max_pages: int = 5):
         """Process either website URL or PDF file."""
         try:
+            # Set max pages for website crawling
+            self.doc_processor.set_max_pages(max_pages)
+            
             # Extract text based on source type
             if source_type == "website":
                 text = self.doc_processor.extract_from_website(source)
@@ -242,7 +233,7 @@ class RAGChatbot:
             except ValueError:
                 return "No content has been loaded yet. Please add a website or PDF first."
             
-            # Construct prompt with context
+            # Generate response
             prompt = f"""Based on the following context, please answer the question. 
             If the answer cannot be found in the context, say so.
             
@@ -253,11 +244,9 @@ class RAGChatbot:
             
             Answer:"""
             
-            # Generate response
             response = self.model.generate_content(
                 prompt,
-                generation_config={"temperature": 0.3},
-                safety_settings=self.safety_settings
+                generation_config={"temperature": 0.3}
             )
             
             return response.text if hasattr(response, 'text') else "I couldn't generate a response. Please try again."
@@ -294,10 +283,10 @@ def main():
         if st.button("Process Website", key="process_website") and website_url:
             with st.spinner(f"Processing website content (up to {max_pages} pages)..."):
                 try:
-                    # Update DocumentProcessor initialization to include max_pages
                     num_chunks = st.session_state.chatbot.process_source(
-                        {"url": website_url, "max_pages": max_pages},
-                        "website"
+                        website_url,  # Pass URL directly
+                        "website",
+                        max_pages  # Pass max_pages as separate parameter
                     )
                     st.success(f"✅ Successfully processed website into {num_chunks} chunks!")
                 except Exception as e:
