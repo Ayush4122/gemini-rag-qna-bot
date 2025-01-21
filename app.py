@@ -58,7 +58,7 @@ def create_vector_store(content):
 
 def answer_question(vector_store, question):
     llm = ChatGoogleGenerativeAI(
-        model="gemini-pro",
+        model="gemini-1.5-pro",
         google_api_key=GOOGLE_API_KEY,
         temperature=0.3
     )
