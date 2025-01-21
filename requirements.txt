@@ -9,4 +9,4 @@ langchain
 numpy
 python-magic
 asyncio
-aiohttp
+io
