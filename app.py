@@ -9,14 +9,14 @@ import PyPDF2
 import io
 from typing import List, Dict, Union
 import os
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 import re
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # Configure environment variables
-# if 'GOOGLE_API_KEY' not in os.environ:
-#     st.error("Please set your GOOGLE_API_KEY environment variable")
-#     st.stop()
+if 'GOOGLE_API_KEY' not in os.environ:
+    st.error("Please set your GOOGLE_API_KEY environment variable")
+    st.stop()
 
 # Configure Google API
 genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
@@ -24,7 +24,7 @@ genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
 class DocumentProcessor:
     def __init__(self):
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,  # Reduced chunk size for better processing
+            chunk_size=500,
             chunk_overlap=50,
             length_function=len,
         )
@@ -35,23 +35,82 @@ class DocumentProcessor:
         text = re.sub(r'[^\w\s.,!?-]', '', text)
         return text.strip()
     
+    def fetch_website_content(self, url: str, max_pages: int = 5) -> str:
+        """Recursively fetch content from website and its internal links."""
+        def get_links(page_url: str) -> List[str]:
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                response = requests.get(page_url, headers=headers, timeout=10)
+                soup = BeautifulSoup(response.content, 'html.parser')
+                base_url = urlparse(page_url)
+                links = []
+                
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    # Convert relative URLs to absolute
+                    absolute_url = urljoin(page_url, href)
+                    # Only include links from the same domain
+                    if urlparse(absolute_url).netloc == base_url.netloc:
+                        links.append(absolute_url)
+                        
+                return links
+            except Exception as e:
+                st.warning(f"Error getting links from {page_url}: {str(e)}")
+                return []
+
+        visited = set()
+        to_visit = [url]
+        content = []
+        
+        with st.sidebar:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+        while to_visit and len(visited) < max_pages:
+            current_url = to_visit.pop(0)
+            if current_url not in visited:
+                try:
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    }
+                    response = requests.get(current_url, headers=headers, timeout=10)
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    
+                    # Remove unwanted elements
+                    for element in soup(['script', 'style', 'header', 'footer', 'nav']):
+                        element.decompose()
+                    
+                    page_text = soup.get_text(separator=' ', strip=True)
+                    content.append(page_text)
+                    visited.add(current_url)
+                    
+                    # Get new links to visit
+                    new_links = [link for link in get_links(current_url) if link not in visited]
+                    to_visit.extend(new_links)
+                    
+                    # Update progress
+                    progress = min(len(visited) / max_pages, 1.0)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Processed {len(visited)} pages...")
+                    
+                except Exception as e:
+                    st.warning(f"Error fetching {current_url}: {str(e)}")
+                    continue
+        
+        # Clear progress indicators
+        progress_bar.empty()
+        status_text.empty()
+        
+        # Combine all content and clean
+        combined_content = "\n\n".join(content)
+        return self.clean_text(combined_content)
+    
     def extract_from_website(self, url: str) -> str:
         """Extract text content from a website."""
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Remove unwanted elements
-            for element in soup(['script', 'style', 'header', 'footer', 'nav']):
-                element.decompose()
-                
-            text = soup.get_text(separator=' ', strip=True)
-            return self.clean_text(text)
-            
+            return self.fetch_website_content(url)
         except Exception as e:
             raise Exception(f"Error extracting text from website: {str(e)}")
     
@@ -72,7 +131,7 @@ class DocumentProcessor:
         if not text.strip():
             raise ValueError("Empty text provided for splitting")
         return self.text_splitter.split_text(text)
-
+        
 class VectorStore:
     def __init__(self, embedding_dimension: int = 768):
         self.index = faiss.IndexFlatL2(embedding_dimension)
@@ -228,11 +287,18 @@ def main():
         st.header("📚 Upload Content")
         
         # Website URL input
-        website_url = st.text_input("🌐 Enter website URL:")
+        st.write("🌐 Enter Website Details")
+        website_url = st.text_input("Website URL:")
+        max_pages = st.number_input("Maximum pages to crawl:", min_value=1, max_value=20, value=5)
+        
         if st.button("Process Website", key="process_website") and website_url:
-            with st.spinner("Processing website content..."):
+            with st.spinner(f"Processing website content (up to {max_pages} pages)..."):
                 try:
-                    num_chunks = st.session_state.chatbot.process_source(website_url, "website")
+                    # Update DocumentProcessor initialization to include max_pages
+                    num_chunks = st.session_state.chatbot.process_source(
+                        {"url": website_url, "max_pages": max_pages},
+                        "website"
+                    )
                     st.success(f"✅ Successfully processed website into {num_chunks} chunks!")
                 except Exception as e:
                     st.error(f"❌ {str(e)}")
