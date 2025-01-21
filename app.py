@@ -13,7 +13,6 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 import asyncio
 import aiohttp
 import time
-import io
 
 class DocumentProcessor:
     def __init__(self):
@@ -209,7 +208,7 @@ class RAGChatbot:
         self.vector_store = None  # Initialize later with actual data
         self.doc_processor = DocumentProcessor()
         
-    async def process_source(self, source: Union[str, io.BytesIO], source_type: str, max_pages: int = 5) -> int:
+    async def process_source(self, source: Union[str, aiohttp.BytesIO], source_type: str, max_pages: int = 5) -> int:
         """Process source with better error handling and feedback."""
         try:
             self.doc_processor.set_max_pages(max_pages)
