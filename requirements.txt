@@ -8,3 +8,4 @@ faiss-cpu
 langchain-community
 tiktoken
 python-dotenv
+python-magic
