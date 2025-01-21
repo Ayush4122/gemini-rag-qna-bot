@@ -220,6 +220,11 @@ st.title("RAG Chatbot")
 # File upload
 uploaded_file = st.file_uploader("Upload a document (PDF, TXT, or DOCX)", type=['pdf', 'txt', 'docx'])
 
+def run_async(func):
+    loop = asyncio.new_event_loop()
+    return loop.run_until_complete(func)
+
+
 async def init_chatbot():
     if st.session_state.chatbot is None:
         st.session_state.chatbot = RAGChatbot()
@@ -229,11 +234,12 @@ async def process_uploaded_file():
         try:
             bytes_data = BytesIO(uploaded_file.getvalue())
             
-            num_pages = await st.session_state.chatbot.process_source(
+            num_pages = run_sync(st.session_state.chatbot.process_source(
                 bytes_data, 
                 uploaded_file.type,
                 max_pages=5
             )
+                                )
             
             st.session_state.document_processed = True
             st.success(f"Successfully processed {num_pages} pages from the document!")
@@ -262,18 +268,9 @@ if st.session_state.document_processed:
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
             try:
-                response = await st.session_state.chatbot.query(prompt)
+                response = run_sync(st.session_state.chatbot.query(prompt))
                 message_placeholder.markdown(response)
                 # Add assistant response to chat history
                 st.session_state.chat_history.append({"role": "assistant", "content": response})
             except Exception as e:
                 message_placeholder.error(f"Error generating response: {str(e)}")
-
-# Run async functions
-async def main():
-    await init_chatbot()
-    if uploaded_file:
-        await process_uploaded_file()
-
-if __name__ == "__main__":
-    asyncio.run(main())
