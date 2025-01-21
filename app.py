@@ -14,9 +14,9 @@ import re
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # Configure environment variables
-if 'GOOGLE_API_KEY' not in os.environ:
-    st.error("Please set your GOOGLE_API_KEY environment variable")
-    st.stop()
+# if 'GOOGLE_API_KEY' not in os.environ:
+#     st.error("Please set your GOOGLE_API_KEY environment variable")
+#     st.stop()
 
 # Configure Google API
 genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
