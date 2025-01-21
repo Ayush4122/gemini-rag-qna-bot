@@ -81,18 +81,24 @@ class VectorStore:
 class RAGChatbot:
     def __init__(self):
         self.model = genai.GenerativeModel('gemini-pro')
-        self.embedding_model = genai.GenerativeModel('models/embedding-001')
-        self.vector_store = VectorStore()
+        self.embedding_dimension = 768  # Dimension for embeddings
+        self.vector_store = VectorStore(self.embedding_dimension)
         self.doc_processor = DocumentProcessor()
         
     def get_embedding(self, text: str) -> np.ndarray:
         """Get embeddings for a text using Gemini."""
         try:
-            embedding = self.embedding_model.embed_content(
-                text,
+            # Using the text-embedding-model from Gemini
+            embedding_model = genai.get_model('embedding-001')
+            embedding = embedding_model.embed_content(
+                content=text,
                 task_type="retrieval_query"
             )
-            return np.array(embedding.values)
+            # Convert to numpy array and normalize
+            embedding_array = np.array(embedding.embedding)
+            normalized_embedding = embedding_array / np.linalg.norm(embedding_array)
+            return normalized_embedding
+            
         except Exception as e:
             raise Exception(f"Error generating embedding: {str(e)}")
     
@@ -109,10 +115,16 @@ class RAGChatbot:
             chunks = self.doc_processor.split_text(text)
             
             # Get embeddings for all chunks
-            embeddings = np.vstack([self.get_embedding(chunk) for chunk in chunks])
+            embeddings = []
+            for chunk in chunks:
+                chunk_embedding = self.get_embedding(chunk)
+                embeddings.append(chunk_embedding)
+            
+            # Convert list of embeddings to numpy array
+            embeddings_array = np.vstack(embeddings)
             
             # Add to vector store
-            self.vector_store.add_texts(chunks, embeddings)
+            self.vector_store.add_texts(chunks, embeddings_array)
             
             return len(chunks)
             
