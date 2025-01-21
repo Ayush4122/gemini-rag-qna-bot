@@ -8,3 +8,5 @@ python-dotenv
 langchain
 numpy
 python-magic
+asyncio
+aiohttp
