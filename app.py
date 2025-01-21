@@ -13,6 +13,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 import asyncio
 import aiohttp
 import time
+import io
 
 class DocumentProcessor:
     def __init__(self):
