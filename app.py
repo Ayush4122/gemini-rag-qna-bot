@@ -149,7 +149,7 @@ class VectorStore:
 class RAGChatbot:
     def __init__(self):
         self.model = genai.GenerativeModel('gemini-pro')
-        self.embedding_model = genai.GenerativeModel('models/embedding-001')
+        self.embedding_model = genai.GenerativeModel('models/text-embedding-004')
         self.vector_store = VectorStore(embedding_dimension=768)
         self.doc_processor = DocumentProcessor()
         
