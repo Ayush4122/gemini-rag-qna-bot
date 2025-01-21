@@ -11,6 +11,7 @@ from urllib.parse import urlparse, urljoin
 import re
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import asyncio
+import aiohttp
 from io import BytesIO 
 import time
 
